@@ -6,9 +6,9 @@ import { isRestApi, isScheduler } from '@common/utils/startup-app';
 import { AdminModule } from './admin/admin.module';
 import { ApiTokensModule } from './api-tokens/api-tokens.module';
 import { AuthModule } from './auth/auth.module';
+import { AwgPeersModule } from './awg-peers/awg-peers.module';
 import { ConfigProfileModule } from './config-profiles/config-profile.module';
 import { ConnectionsModule } from './connections/connections.module';
-import { NodeSshModule } from './node-ssh/node-ssh.module';
 import { ExternalSquadModule } from './external-squads/external-squads.module';
 import { HostsModule } from './hosts/hosts.module';
 import { HwidUserDevicesModule } from './hwid-user-devices/hwid-user-devices.module';
@@ -18,6 +18,7 @@ import { KeygenModule } from './keygen/keygen.module';
 import { MetadataModule } from './metadata/metadata.module';
 import { NodeIntegrationModule } from './node-integrations';
 import { NodePluginModule } from './node-plugins';
+import { NodeSshModule } from './node-ssh/node-ssh.module';
 import { NodesUsageHistoryModule } from './nodes-usage-history/nodes-usage-history.module';
 import { NodesUserUsageHistoryModule } from './nodes-user-usage-history/nodes-user-usage-history.module';
 import { NodesModule } from './nodes/nodes.module';
@@ -43,6 +44,7 @@ import { UsersModule } from './users/users.module';
         ConditionalModule.registerWhen(SubscriptionModule, () => isRestApi()),
         ConditionalModule.registerWhen(ApiTokensModule, () => isRestApi()),
         ConfigProfileModule,
+        AwgPeersModule,
         InternalSquadModule,
         ExternalSquadModule,
         KeygenModule,

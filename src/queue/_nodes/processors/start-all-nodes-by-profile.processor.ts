@@ -8,7 +8,7 @@ import { CommandBus, QueryBus } from '@nestjs/cqrs';
 
 import { AxiosService } from '@common/axios/axios.service';
 import { RawCacheService } from '@common/raw-cache';
-import { CACHE_KEYS, CACHE_KEYS_TTL } from '@libs/contracts/constants';
+import { AMNEZIAWG_INBOUND_TYPE, CACHE_KEYS, CACHE_KEYS_TTL } from '@libs/contracts/constants';
 
 import { ConfigProfileInboundEntity } from '@modules/config-profiles/entities';
 import { GetResolvedIntegrationsQuery } from '@modules/node-integrations/queries/get-resolved-integrations';
@@ -80,6 +80,22 @@ export class StartAllNodesByProfileQueueProcessor extends WorkerHost {
             }
 
             const { response: nodes } = findNodesByCriteriaResult;
+
+            // AmneziaWG profiles: per-node config (IP allocation, peers) is built by the regular start-node flow
+            if (
+                nodes.some((node) =>
+                    node.activeInbounds.some((inbound) => inbound.type === AMNEZIAWG_INBOUND_TYPE),
+                )
+            ) {
+                for (const node of nodes) {
+                    await this.nodesQueuesService.startNode({
+                        nodeUuid: node.uuid,
+                        force: payload.force,
+                    });
+                }
+
+                return;
+            }
 
             const activeInboundsOnNodes = new Map<string, ConfigProfileInboundEntity>();
             const activeNodeTags = new Map<string, string[]>();

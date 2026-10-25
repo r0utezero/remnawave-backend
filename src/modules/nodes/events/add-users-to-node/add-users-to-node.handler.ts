@@ -6,7 +6,10 @@ import { AddUsersCommand as AddUsersToNodeCommandSdk } from '@remnawave/node-con
 
 import { isSS2022Method } from '@common/helpers/xray-config/ss-cipher';
 import { getVlessFlowFromDbInbound } from '@common/utils/flow/get-vless-flow';
+import { AMNEZIAWG_INBOUND_TYPE } from '@libs/contracts/constants';
 
+import { GetUsersAwgPeersQuery } from '@modules/awg-peers/queries/get-users-awg-peers';
+import { IAwgUserData } from '@modules/awg-peers/repositories/awg-peers.repository';
 import { ConfigProfileInboundEntity } from '@modules/config-profiles/entities';
 import { GetUsersWithResolvedInboundsQuery } from '@modules/users/queries/get-users-with-resolved-inbounds';
 
@@ -47,6 +50,30 @@ export class AddUsersToNodeHandler implements IEventHandler<AddUsersToNodeEvent>
 
             if (activeNodes.length === 0) return;
 
+            const awgInbounds = new Map<string, ConfigProfileInboundEntity>();
+            for (const user of usersResult.response) {
+                for (const inbound of user.inbounds) {
+                    if (inbound.type === AMNEZIAWG_INBOUND_TYPE) {
+                        awgInbounds.set(inbound.uuid, inbound);
+                    }
+                }
+            }
+
+            let awgUsersData = new Map<bigint, IAwgUserData>();
+
+            if (awgInbounds.size > 0) {
+                const awgResult = await this.queryBus.execute(
+                    new GetUsersAwgPeersQuery(
+                        usersResult.response.map((user) => user.id),
+                        [...awgInbounds.values()],
+                    ),
+                );
+
+                if (awgResult.isOk) {
+                    awgUsersData = awgResult.response;
+                }
+            }
+
             for (const node of activeNodes) {
                 const activeTags = new Set(node.activeInbounds.map((ib) => ib.tag));
 
@@ -58,7 +85,17 @@ export class AddUsersToNodeHandler implements IEventHandler<AddUsersToNodeEvent>
 
                     if (inbounds.length === 0) continue;
 
-                    const filteredInbounds = inbounds.filter((ib) => activeTags.has(ib.tag));
+                    const awgUserData = awgUsersData.get(id);
+                    const awgIps = new Map(
+                        (awgUserData?.peers ?? []).map((peer) => [peer.inboundUuid, peer.ip]),
+                    );
+
+                    const filteredInbounds = inbounds.filter(
+                        (ib) =>
+                            activeTags.has(ib.tag) &&
+                            (ib.type !== AMNEZIAWG_INBOUND_TYPE ||
+                                (!!awgUserData?.awgPublicKey && awgIps.has(ib.uuid))),
+                    );
 
                     if (filteredInbounds.length === 0) {
                         usersToRemove.push({ userId: id.toString(), hashUuid: vlessUuid });
@@ -72,11 +109,19 @@ export class AddUsersToNodeHandler implements IEventHandler<AddUsersToNodeEvent>
                             vlessUuid,
                             trojanPassword,
                             ssPassword,
+                            awgPublicKey: awgUserData?.awgPublicKey ?? null,
+                            awgPresharedKey: awgUserData?.awgPresharedKey ?? null,
                         },
                         inboundData: filteredInbounds.map((inbound) => {
                             const inboundType = this.resolveInboundType(inbound);
 
                             switch (inboundType) {
+                                case AMNEZIAWG_INBOUND_TYPE:
+                                    return {
+                                        type: AMNEZIAWG_INBOUND_TYPE,
+                                        tag: inbound.tag,
+                                        allowedIp: awgIps.get(inbound.uuid)!,
+                                    };
                                 case 'trojan':
                                     return { type: inboundType, tag: inbound.tag };
                                 case 'vless':

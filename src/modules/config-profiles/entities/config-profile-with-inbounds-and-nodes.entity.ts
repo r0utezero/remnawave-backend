@@ -1,6 +1,8 @@
 import { ConfigProfiles } from '@prisma/client';
 import { JsonArray, JsonObject } from '@prisma/client/runtime/library';
 
+import { TCoreType } from '@libs/contracts/constants';
+
 import { ConfigProfileInboundEntity } from './config-profile-inbound.entity';
 
 export class ConfigProfileWithInboundsAndNodesEntity implements ConfigProfiles {
@@ -9,6 +11,7 @@ export class ConfigProfileWithInboundsAndNodesEntity implements ConfigProfiles {
     public name: string;
     public tags: string[];
     public config: string | number | boolean | JsonObject | JsonArray | null | object;
+    public coreType: TCoreType;
 
     public inbounds: ConfigProfileInboundEntity[];
     public nodes: {

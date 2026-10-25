@@ -1,7 +1,7 @@
 import { SplitHTTPMode, TCPHeaderHTTP, TCPHeaderNone, VLessFlow } from 'xray-typed';
 
 import { TMihomoIpVersion, TSubscriptionTemplateType } from '@libs/contracts/constants';
-import { THostMapper } from '@libs/contracts/models';
+import { TAwgObfuscation, THostMapper } from '@libs/contracts/models';
 
 // ─── Protocol Options ────────────────────────────────────
 
@@ -230,3 +230,23 @@ export type ResolvedProxyConfig = {
 } & ProtocolVariant &
     SecurityVariant &
     TransportVariant;
+
+// ─── Resolved AmneziaWG Config ───────────────────────────
+
+export interface IResolvedAwgConfig {
+    finalRemark: string;
+    address: string;
+    port: number;
+
+    privateKey: string;
+    presharedKey: string | null;
+    clientIp: string;
+    serverPublicKey: string;
+    mtu: number | null;
+    dns: string[];
+    allowedIps: string[];
+    persistentKeepalive: number | null;
+    obfuscation: TAwgObfuscation;
+
+    metadata: IProxyEntryMetadata;
+}

@@ -30,7 +30,9 @@ import {
     RecreateTablesCommand,
     RemoveUserCommand,
     RemoveUsersCommand,
+    StartAwgCommand,
     StartXrayCommand,
+    StopAwgCommand,
     StopXrayCommand,
     SyncCommand,
     UnblockIpsCommand,
@@ -275,6 +277,32 @@ export class AxiosService {
         return this.request<StopXrayCommand.Response>({
             label: 'STOP XRAY',
             path: StopXrayCommand.url,
+            opts,
+            method: 'get',
+        });
+    }
+
+    public async startAwg(
+        data: StartAwgCommand.Request,
+        opts: INodeConnectionOpts,
+    ): Promise<TResult<StartAwgCommand.Response['response']>> {
+        return this.request<StartAwgCommand.Response>({
+            label: 'START AWG',
+            path: StartAwgCommand.url,
+            opts,
+            data,
+            compress: true,
+            logAxiosError: false,
+            timeout: 60_000,
+        });
+    }
+
+    public async stopAwg(
+        opts: INodeConnectionOpts,
+    ): Promise<TResult<StopAwgCommand.Response['response']>> {
+        return this.request<StopAwgCommand.Response>({
+            label: 'STOP AWG',
+            path: StopAwgCommand.url,
             opts,
             method: 'get',
         });

@@ -19,6 +19,10 @@ export class BaseUserEntity implements Users {
     public vlessUuid: string;
     public ssPassword: string;
 
+    public awgPrivateKey: string | null;
+    public awgPublicKey: string | null;
+    public awgPresharedKey: string | null;
+
     public description: null | string;
     public tag: string | null;
     public telegramId: bigint | null;

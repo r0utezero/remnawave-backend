@@ -3,7 +3,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { THostMapperOperation } from '@libs/contracts/models';
 
 import { applyHostMapper } from '../host-mapper';
-import { ResolvedProxyConfig } from '../resolve-proxy/interfaces';
+import { IResolvedAwgConfig, ResolvedProxyConfig } from '../resolve-proxy/interfaces';
+import { buildAwgLink } from './awg';
 
 interface ShareLink {
     address: string;
@@ -48,9 +49,13 @@ export class XrayGeneratorService {
         hosts: ResolvedProxyConfig[],
         isBase64: boolean,
         isExtendedClient: boolean,
+        awgHosts: IResolvedAwgConfig[] = [],
     ): Promise<string> {
         try {
-            const links = this.generateLinks(hosts, isExtendedClient);
+            const links = [
+                ...this.generateLinks(hosts, isExtendedClient),
+                ...this.generateAwgLinks(awgHosts),
+            ];
             const joined = links.join('\n');
             return isBase64 ? Buffer.from(joined).toString('base64') : joined;
         } catch (error) {
@@ -78,6 +83,12 @@ export class XrayGeneratorService {
         }
 
         return links;
+    }
+
+    public generateAwgLinks(hosts: IResolvedAwgConfig[]): string[] {
+        return hosts
+            .filter((host) => !host.metadata.excludeFromSubscriptionTypes.includes('XRAY_BASE64'))
+            .map((host) => buildAwgLink(host));
     }
 
     private generateLink(host: ResolvedProxyConfig): ShareLink | null {

@@ -171,6 +171,13 @@ export class ConfigProfileRepository {
         return new ConfigProfileWithInboundsAndNodesEntity(result);
     }
 
+    public async deleteAwgPeersByInboundUuid(inboundUuid: string): Promise<void> {
+        await this.qb.kysely
+            .deleteFrom('userAwgPeers')
+            .where('inboundUuid', '=', getKyselyUuid(inboundUuid))
+            .execute();
+    }
+
     public async createManyConfigProfileInbounds(inbounds: ConfigProfileInboundEntity[]): Promise<{
         count: number;
     }> {

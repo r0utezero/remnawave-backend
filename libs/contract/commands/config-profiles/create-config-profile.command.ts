@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { CONFIG_PROFILES_ROUTES, REST_API } from '../../api';
-import { getEndpointDetails } from '../../constants';
+import { CORE_TYPE, CORE_TYPE_VALUES, getEndpointDetails } from '../../constants';
 import { ConfigProfileSchema } from '../../models';
 
 export namespace CreateConfigProfileCommand {
@@ -25,6 +25,7 @@ export namespace CreateConfigProfileCommand {
                 'Name can only contain letters, numbers, underscores, dashes and spaces',
             ),
         config: z.looseObject({}),
+        coreType: z.optional(z.enum(CORE_TYPE_VALUES)).default(CORE_TYPE.XRAY),
     });
 
     export const ResponseSchema = z.object({

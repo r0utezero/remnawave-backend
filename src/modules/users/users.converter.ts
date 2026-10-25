@@ -27,6 +27,10 @@ const entityToModel = (entity: BaseUserEntity): Users => {
         vlessUuid: entity.vlessUuid,
         ssPassword: entity.ssPassword,
 
+        awgPrivateKey: entity.awgPrivateKey,
+        awgPublicKey: entity.awgPublicKey,
+        awgPresharedKey: entity.awgPresharedKey,
+
         description: entity.description,
         tag: entity.tag,
 

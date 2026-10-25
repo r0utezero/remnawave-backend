@@ -8,6 +8,7 @@ import { EventBus, QueryBus } from '@nestjs/cqrs';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 
 import { TypedConfigService } from '@common/config/app-config';
+import { generateAwgKeyPair, generateAwgPresharedKey } from '@common/helpers/awg-config';
 import { fail, ok, TResult } from '@common/types';
 import {
     compileShortUuidPattern,
@@ -329,12 +330,17 @@ export class UsersService {
                 shortUuid = dto.shortUuid ?? this.generateShortUuid();
             }
 
+            const awgKeyPair = generateAwgKeyPair();
+
             const updateResult = await this.userRepository.revokeUserSubscription({
                 id: user.id,
                 shortUuid,
                 trojanPassword: this.createPassword(),
                 vlessUuid: this.createUuid(),
                 ssPassword: this.createPassword(),
+                awgPrivateKey: awgKeyPair.privateKey,
+                awgPublicKey: awgKeyPair.publicKey,
+                awgPresharedKey: generateAwgPresharedKey(),
                 subRevokedAt: new Date(),
                 updatedAt: new Date(),
             });

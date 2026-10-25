@@ -13,6 +13,7 @@ import {
 } from 'xray-typed';
 
 import { Injectable } from '@nestjs/common';
+import { QueryBus } from '@nestjs/cqrs';
 
 import { TypedConfigService } from '@common/config/app-config';
 import {
@@ -24,8 +25,11 @@ import { getSsPassword, isSS2022MethodFromMethod } from '@common/helpers/xray-co
 import { getVlessFlow } from '@common/utils/flow';
 import { TemplateEngine } from '@common/utils/templates/replace-templates-values';
 import { setVlessRouteForUuid } from '@common/utils/vless-route';
-import { SECURITY_LAYERS, USERS_STATUS } from '@libs/contracts/constants';
+import { AMNEZIAWG_INBOUND_TYPE, SECURITY_LAYERS, USERS_STATUS } from '@libs/contracts/constants';
+import { TAwgRawInbound } from '@libs/contracts/models';
 
+import { GetUserAwgPeersQuery } from '@modules/awg-peers/queries/get-user-awg-peers';
+import { IAwgUserData } from '@modules/awg-peers/repositories/awg-peers.repository';
 import { ExternalSquadEntity } from '@modules/external-squads/entities';
 import { HostWithRawInbound } from '@modules/hosts/entities/host-with-inbound-tag.entity';
 import { ISRRContext } from '@modules/subscription-response-rules/interfaces';
@@ -36,6 +40,7 @@ import {
     GrpcTransport,
     HttpUpgradeTransport,
     HysteriaTransport,
+    IResolvedAwgConfig,
     KcpTransport,
     ProtocolVariant,
     ResolvedProxyConfig,
@@ -67,7 +72,10 @@ export class ResolveProxyConfigService {
     private readonly domainRegex =
         /^(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
 
-    constructor(private readonly configService: TypedConfigService) {
+    constructor(
+        private readonly configService: TypedConfigService,
+        private readonly queryBus: QueryBus,
+    ) {
         this.nanoid = customAlphabet('0123456789abcdefghjkmnopqrstuvwxyz', 10);
         this.subPublicDomain = this.configService.getOrThrow('SUB_PUBLIC_DOMAIN');
     }
@@ -75,11 +83,22 @@ export class ResolveProxyConfigService {
     public async resolveProxyConfig(
         options: IResolveProxyConfigOptions,
     ): Promise<ResolvedProxyConfig[]> {
+        return (await this.resolveSubscriptionConfigs(options, false)).proxies;
+    }
+
+    /**
+     * Resolves Xray proxies and (optionally) AmneziaWG configs for the user.
+     * AmneziaWG hosts are never part of `proxies`.
+     */
+    public async resolveSubscriptionConfigs(
+        options: IResolveProxyConfigOptions,
+        includeAwg = true,
+    ): Promise<{ proxies: ResolvedProxyConfig[]; awg: IResolvedAwgConfig[] }> {
         const { user, hostsOverrides, subscriptionSettings, fallbackOptions, excludeHostsByTags } =
             options;
 
         if (subscriptionSettings === null) {
-            return [];
+            return { proxies: [], awg: [] };
         }
 
         if (excludeHostsByTags) {
@@ -95,12 +114,20 @@ export class ResolveProxyConfigService {
             options.hosts.length,
         );
         if (earlyRemarks !== null) {
-            return this.createFallbackHosts(
-                this.templateRemarks(earlyRemarks, user, subscriptionSettings),
-            );
+            return {
+                proxies: this.createFallbackHosts(
+                    this.templateRemarks(earlyRemarks, user, subscriptionSettings),
+                ),
+                awg: [],
+            };
         }
 
-        const hosts = this.applyShuffle(options.hosts);
+        const hosts = this.applyShuffle(
+            includeAwg ? options.hosts : options.hosts.filter((h) => !this.isAwgHost(h)),
+        );
+
+        const awgUserData = includeAwg ? await this.fetchAwgUserData(user, hosts) : null;
+        const resolvedAwgConfigs: IResolvedAwgConfig[] = [];
 
         const rawInbounds = hosts.map((h) => h.rawInbound);
         const [publicKeyMap, mldsa65PublicKeyMap, encryptionMap] = await Promise.all([
@@ -126,6 +153,18 @@ export class ResolveProxyConfigService {
                 knownRemarks,
             );
 
+            if (this.isAwgHost(inputHost)) {
+                const resolvedAwgConfig = awgUserData
+                    ? this.buildResolvedAwgConfig(inputHost, finalRemark, awgUserData)
+                    : null;
+
+                if (resolvedAwgConfig) {
+                    resolvedAwgConfigs.push(resolvedAwgConfig);
+                }
+
+                continue;
+            }
+
             const resolvedProxyConfig = this.buildResolvedProxyConfig({
                 inputHost,
                 inbound: inputHost.rawInbound as InboundConfig,
@@ -141,7 +180,86 @@ export class ResolveProxyConfigService {
             }
         }
 
-        return resolvedProxyConfigs;
+        return { proxies: resolvedProxyConfigs, awg: resolvedAwgConfigs };
+    }
+
+    private isAwgHost(host: HostWithRawInbound): boolean {
+        const raw = host.rawInbound as Partial<TAwgRawInbound> | null;
+
+        return raw?.protocol === AMNEZIAWG_INBOUND_TYPE;
+    }
+
+    private async fetchAwgUserData(
+        user: UserEntity,
+        hosts: HostWithRawInbound[],
+    ): Promise<IAwgUserData | null> {
+        const awgInbounds = new Map<
+            string,
+            { uuid: string; tag: string; type: string; rawInbound: unknown }
+        >();
+
+        for (const host of hosts) {
+            if (!this.isAwgHost(host) || !host.configProfileInboundUuid) continue;
+
+            awgInbounds.set(host.configProfileInboundUuid, {
+                uuid: host.configProfileInboundUuid,
+                tag: host.inboundTag,
+                type: AMNEZIAWG_INBOUND_TYPE,
+                rawInbound: host.rawInbound,
+            });
+        }
+
+        if (awgInbounds.size === 0) return null;
+
+        const result = await this.queryBus.execute(
+            new GetUserAwgPeersQuery(user.id, [...awgInbounds.values()]),
+        );
+
+        return result.isOk ? result.response : null;
+    }
+
+    private buildResolvedAwgConfig(
+        inputHost: HostWithRawInbound,
+        finalRemark: string,
+        awgUserData: IAwgUserData,
+    ): IResolvedAwgConfig | null {
+        const raw = inputHost.rawInbound as TAwgRawInbound;
+        const peer = awgUserData.peers.find(
+            (p) => p.inboundUuid === inputHost.configProfileInboundUuid,
+        );
+
+        if (!peer || !awgUserData.awgPrivateKey) {
+            return null;
+        }
+
+        return {
+            finalRemark,
+            address: this.resolveRandomizedValue(inputHost.address),
+            port: inputHost.port,
+            privateKey: awgUserData.awgPrivateKey,
+            presharedKey: awgUserData.awgPresharedKey,
+            clientIp: peer.ip,
+            serverPublicKey: raw.publicKey,
+            mtu: raw.mtu ?? null,
+            dns: raw.clientDns ?? ['1.1.1.1', '1.0.0.1'],
+            allowedIps: raw.clientAllowedIps ?? ['0.0.0.0/0', '::/0'],
+            persistentKeepalive: raw.persistentKeepalive ?? 25,
+            obfuscation: raw.obfuscation,
+            metadata: {
+                uuid: inputHost.uuid,
+                tags: inputHost.tags,
+                excludeFromSubscriptionTypes: inputHost.excludeFromSubscriptionTypes,
+                inboundTag: inputHost.inboundTag,
+                configProfileUuid: inputHost.configProfileUuid,
+                configProfileInboundUuid: inputHost.configProfileInboundUuid,
+                isDisabled: inputHost.isDisabled,
+                isHidden: inputHost.isHidden,
+                viewPosition: inputHost.viewPosition,
+                remark: inputHost.remark,
+                vlessRouteId: inputHost.vlessRouteId,
+                rawInbound: inputHost.rawInbound,
+            },
+        };
     }
 
     private resolveEarlyExitRemarks(

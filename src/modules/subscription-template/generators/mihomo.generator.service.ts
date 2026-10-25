@@ -9,7 +9,7 @@ import { FINGERPRINTS } from '@libs/contracts/constants';
 import { SubscriptionTemplateService } from '@modules/subscription-template/subscription-template.service';
 
 import { applyHostMapper } from '../host-mapper';
-import { ResolvedProxyConfig } from '../resolve-proxy/interfaces';
+import { IResolvedAwgConfig, ResolvedProxyConfig } from '../resolve-proxy/interfaces';
 
 export interface MihomoData {
     proxies: ProxyNode[];
@@ -133,6 +133,7 @@ export class MihomoGeneratorService {
         isStash = false,
         isExtendedClient = false,
         overrideTemplateName?: string,
+        awgHosts: IResolvedAwgConfig[] = [],
     ): Promise<string> {
         try {
             const templateType = isStash ? 'STASH' : 'MIHOMO';
@@ -165,11 +166,65 @@ export class MihomoGeneratorService {
                 proxyRemarks.push(host.finalRemark);
             }
 
+            // Stash has no AmneziaWG support
+            if (!isStash) {
+                for (const host of awgHosts) {
+                    if (!includeHidden && host.metadata.isHidden) continue;
+                    if (host.metadata.excludeFromSubscriptionTypes.includes(templateType)) continue;
+
+                    data.proxies.push(this.buildAmneziaWgNode(host));
+                    proxyRemarks.push(host.finalRemark);
+                }
+            }
+
             return await this.renderConfig(data, proxyRemarks, yamlConfig);
         } catch (error) {
             this.logger.error('Error generating clash config:', error);
             return '';
         }
+    }
+
+    private buildAmneziaWgNode(host: IResolvedAwgConfig): ProxyNode {
+        const toNumberIfInt = (value: string | undefined) =>
+            value !== undefined && /^\d+$/.test(value) ? Number(value) : value;
+
+        const { obfuscation } = host;
+
+        const amneziaOptions: Record<string, unknown> = {
+            jc: obfuscation.jc,
+            jmin: obfuscation.jmin,
+            jmax: obfuscation.jmax,
+            s1: obfuscation.s1,
+            s2: obfuscation.s2,
+            s3: obfuscation.s3,
+            s4: obfuscation.s4,
+            h1: toNumberIfInt(obfuscation.h1),
+            h2: toNumberIfInt(obfuscation.h2),
+            h3: toNumberIfInt(obfuscation.h3),
+            h4: toNumberIfInt(obfuscation.h4),
+            i1: obfuscation.i1 || undefined,
+            i2: obfuscation.i2 || undefined,
+            i3: obfuscation.i3 || undefined,
+            i4: obfuscation.i4 || undefined,
+            i5: obfuscation.i5 || undefined,
+        };
+
+        return {
+            name: host.finalRemark,
+            type: 'wireguard',
+            server: host.address,
+            port: host.port,
+            ip: host.clientIp,
+            'private-key': host.privateKey,
+            'public-key': host.serverPublicKey,
+            'pre-shared-key': host.presharedKey ?? undefined,
+            'allowed-ips': host.allowedIps,
+            mtu: host.mtu ?? undefined,
+            'persistent-keepalive': host.persistentKeepalive ?? undefined,
+            dns: host.dns.length > 0 ? host.dns : undefined,
+            udp: true,
+            'amnezia-wg-option': _.omitBy(amneziaOptions, _.isUndefined),
+        };
     }
 
     private buildProxyNode(host: ResolvedProxyConfig, isExtendedClient: boolean): ProxyNode | null {

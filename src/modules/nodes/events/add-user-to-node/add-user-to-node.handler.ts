@@ -10,7 +10,9 @@ import {
     isSS2022Method,
 } from '@common/helpers/xray-config/ss-cipher';
 import { getVlessFlowFromDbInbound } from '@common/utils/flow/get-vless-flow';
+import { AMNEZIAWG_INBOUND_TYPE } from '@libs/contracts/constants';
 
+import { GetUserAwgPeersQuery } from '@modules/awg-peers/queries/get-user-awg-peers';
 import { ConfigProfileInboundEntity } from '@modules/config-profiles/entities/config-profile-inbound.entity';
 import { GetUserWithResolvedInboundsQuery } from '@modules/users/queries/get-user-with-resolved-inbounds';
 
@@ -50,16 +52,41 @@ export class AddUserToNodeHandler implements IEventHandler<AddUserToNodeEvent> {
                 return;
             }
 
+            const awgData = inbounds.some((inbound) => inbound.type === AMNEZIAWG_INBOUND_TYPE)
+                ? await this.queryBus.execute(new GetUserAwgPeersQuery(id, inbounds))
+                : null;
+
+            const awgIps = new Map(
+                awgData?.isOk ? awgData.response.peers.map((p) => [p.inboundUuid, p.ip]) : [],
+            );
+            const awgPublicKey = awgData?.isOk ? awgData.response.awgPublicKey : null;
+            const awgPresharedKey = awgData?.isOk ? awgData.response.awgPresharedKey : null;
+
+            const supportedInbounds = inbounds.filter(
+                (inbound) =>
+                    inbound.type !== AMNEZIAWG_INBOUND_TYPE ||
+                    (awgPublicKey !== null && awgIps.has(inbound.uuid)),
+            );
+
             const userData: AddUserToNodeCommandSdk.Request = {
                 hashData: {
                     vlessUuid,
                     prevVlessUuid: event.prevVlessUuid,
                 },
 
-                data: inbounds.map((inbound) => {
+                data: supportedInbounds.map((inbound) => {
                     const inboundType = this.resolveInboundType(inbound);
 
                     switch (inboundType) {
+                        case AMNEZIAWG_INBOUND_TYPE:
+                            return {
+                                type: AMNEZIAWG_INBOUND_TYPE,
+                                username: id.toString(),
+                                tag: inbound.tag,
+                                publicKey: awgPublicKey!,
+                                presharedKey: awgPresharedKey,
+                                allowedIp: awgIps.get(inbound.uuid)!,
+                            };
                         case 'trojan':
                             return {
                                 type: inboundType,

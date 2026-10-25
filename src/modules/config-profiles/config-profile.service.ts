@@ -4,11 +4,17 @@ import { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { Injectable, Logger } from '@nestjs/common';
 import { QueryBus } from '@nestjs/cqrs';
 
+import { getSortedProfileConfig, parseProfileConfig } from '@common/helpers/core-config';
 import { XRayConfig } from '@common/helpers/xray-config';
 import { RawCacheService } from '@common/raw-cache';
 import { fail, ok, TResult } from '@common/types';
 import { diffInbounds } from '@common/utils/inbounds';
-import { CACHE_KEYS } from '@libs/contracts/constants';
+import {
+    AMNEZIAWG_INBOUND_TYPE,
+    CACHE_KEYS,
+    CORE_TYPE,
+    TCoreType,
+} from '@libs/contracts/constants';
 import { ERRORS } from '@libs/contracts/constants/errors';
 
 import { NodesQueuesService } from '@queue/_nodes';
@@ -22,6 +28,14 @@ import { GetConfigProfileByUuidResponseModel } from './models/get-config-profile
 import { GetConfigProfilesResponseModel } from './models/get-config-profiles.response.model';
 import { GetSnippetsQuery } from './queries/get-snippets';
 import { ConfigProfileRepository } from './repositories/config-profile.repository';
+
+function getAwgAddress(rawInbound: unknown): string | undefined {
+    if (rawInbound && typeof rawInbound === 'object' && 'address' in rawInbound) {
+        return String(rawInbound.address);
+    }
+
+    return undefined;
+}
 
 @Injectable()
 export class ConfigProfileService {
@@ -39,9 +53,10 @@ export class ConfigProfileService {
             const configProfiles = await this.configProfileRepository.getAllConfigProfiles();
 
             for (const configProfile of configProfiles) {
-                configProfile.config = new XRayConfig(
-                    configProfile.config as object,
-                ).getSortedConfig();
+                configProfile.config = getSortedProfileConfig(
+                    configProfile.coreType,
+                    configProfile.config,
+                );
             }
 
             const total = await this.configProfileRepository.getTotalConfigProfiles();
@@ -63,7 +78,10 @@ export class ConfigProfileService {
                 return fail(ERRORS.CONFIG_PROFILE_NOT_FOUND);
             }
 
-            configProfile.config = new XRayConfig(configProfile.config as object).getSortedConfig();
+            configProfile.config = getSortedProfileConfig(
+                configProfile.coreType,
+                configProfile.config,
+            );
 
             return ok(new GetConfigProfileByUuidResponseModel(configProfile));
         } catch (error) {
@@ -80,6 +98,15 @@ export class ConfigProfileService {
 
             if (!configProfile) {
                 return fail(ERRORS.CONFIG_PROFILE_NOT_FOUND);
+            }
+
+            if (configProfile.coreType !== CORE_TYPE.XRAY) {
+                configProfile.config = getSortedProfileConfig(
+                    configProfile.coreType,
+                    configProfile.config,
+                );
+
+                return ok(new GetConfigProfileByUuidResponseModel(configProfile));
             }
 
             const snippetsMap: Map<string, unknown> = new Map();
@@ -136,21 +163,20 @@ export class ConfigProfileService {
     public async createConfigProfile(
         name: string,
         config: object,
+        coreType: TCoreType = CORE_TYPE.XRAY,
     ): Promise<TResult<GetConfigProfileByUuidResponseModel>> {
         try {
             if (name === 'Default-Profile') {
                 return fail(ERRORS.RESERVED_CONFIG_PROFILE_NAME);
             }
 
-            const validatedConfig = new XRayConfig(config);
-            const sortedConfig = validatedConfig.getSortedConfig();
+            const { sortedConfig, inbounds } = parseProfileConfig(coreType, config);
 
             const profileEntity = new ConfigProfileEntity({
                 name,
-                config: sortedConfig as object,
+                coreType,
+                config: sortedConfig,
             });
-
-            const inbounds = validatedConfig.getAllInbounds();
 
             const inboundsEntities = inbounds.map(
                 (inbound) =>
@@ -269,14 +295,11 @@ export class ConfigProfileService {
         if (config) {
             const existingInbounds = existingConfigProfile.inbounds;
 
-            const validatedConfig = new XRayConfig(config);
-
-            validatedConfig.cleanInboundClients(false);
-            validatedConfig.fixIncorrectServerNames();
-            validatedConfig.validateOutbounds();
-
-            const sortedConfig = validatedConfig.getSortedConfig();
-            const inbounds = validatedConfig.getAllInbounds();
+            const { sortedConfig, inbounds } = parseProfileConfig(
+                existingConfigProfile.coreType,
+                config,
+                true,
+            );
 
             const inboundsEntities = inbounds.map(
                 (inbound) =>
@@ -293,7 +316,7 @@ export class ConfigProfileService {
 
             await this.syncInbounds(existingInbounds, inboundsEntities);
 
-            configProfileEntity.config = sortedConfig as object;
+            configProfileEntity.config = sortedConfig;
         }
 
         await this.configProfileRepository.update(configProfileEntity);
@@ -370,8 +393,24 @@ export class ConfigProfileService {
             if (toUpdate.length) {
                 this.logger.log(`Updating inbounds: ${toUpdate.map((i) => i.tag).join(', ')}`);
 
+                const existingByUuid = new Map(existingInbounds.map((i) => [i.uuid, i]));
+
                 for (const inbound of toUpdate) {
                     await this.configProfileRepository.updateConfigProfileInbound(inbound);
+
+                    if (
+                        inbound.type === AMNEZIAWG_INBOUND_TYPE &&
+                        getAwgAddress(existingByUuid.get(inbound.uuid)?.rawInbound) !==
+                            getAwgAddress(inbound.rawInbound)
+                    ) {
+                        this.logger.log(
+                            `AmneziaWG subnet changed for ${inbound.tag}, resetting peers`,
+                        );
+
+                        await this.configProfileRepository.deleteAwgPeersByInboundUuid(
+                            inbound.uuid,
+                        );
+                    }
                 }
             }
 

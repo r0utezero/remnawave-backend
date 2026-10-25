@@ -1120,11 +1120,17 @@ export class UsersRepository {
             | 'subRevokedAt'
             | 'shortUuid'
             | 'updatedAt'
+            | 'awgPrivateKey'
+            | 'awgPublicKey'
+            | 'awgPresharedKey'
         >,
     ): Promise<boolean> {
         const result = await this.qb.kysely
             .updateTable('users')
             .set({
+                awgPrivateKey: dto.awgPrivateKey,
+                awgPublicKey: dto.awgPublicKey,
+                awgPresharedKey: dto.awgPresharedKey,
                 subRevokedAt: dto.subRevokedAt,
                 trojanPassword: dto.trojanPassword,
                 vlessUuid: getKyselyUuid(dto.vlessUuid),

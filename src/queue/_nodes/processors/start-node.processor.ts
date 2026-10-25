@@ -9,10 +9,16 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { AxiosService } from '@common/axios/axios.service';
 import { RawCacheService } from '@common/raw-cache';
 import { formatExecutionTime, getTime } from '@common/utils/get-elapsed-time';
-import { CACHE_KEYS, CACHE_KEYS_TTL, EVENTS } from '@libs/contracts/constants';
+import {
+    AMNEZIAWG_INBOUND_TYPE,
+    CACHE_KEYS,
+    CACHE_KEYS_TTL,
+    EVENTS,
+} from '@libs/contracts/constants';
 
 import { NodeEvent } from '@integration-modules/notifications/interfaces';
 
+import { GetPreparedAwgConfigWithUsersQuery } from '@modules/awg-peers/queries/get-prepared-awg-config-with-users';
 import { GetResolvedIntegrationsQuery } from '@modules/node-integrations/queries/get-resolved-integrations';
 import { mergeNodeIntegrations } from '@modules/node-integrations/utils';
 import { GetPluginByUuidQuery } from '@modules/node-plugins/queries/get-plugin-by-uuid';
@@ -139,6 +145,24 @@ export class StartNodeProcessor extends WorkerHost {
                 return;
             }
 
+            const isAwgProfile = node.activeInbounds.some(
+                (inbound) => inbound.type === AMNEZIAWG_INBOUND_TYPE,
+            );
+
+            if (isAwgProfile && !xrayStatusResponse.response.coreType) {
+                await this.commandBus.execute(
+                    new UpdateNodeCommand({
+                        uuid: node.uuid,
+                        lastStatusMessage: `Remnawave Node ${xrayStatusResponse.response.nodeVersion} does not support AmneziaWG. Please upgrade the node.`,
+                        lastStatusChange: new Date(),
+                        isConnected: false,
+                        isConnecting: false,
+                    }),
+                );
+
+                return;
+            }
+
             let plugin: {
                 uuid: string;
                 config: Record<string, unknown>;
@@ -190,20 +214,6 @@ export class StartNodeProcessor extends WorkerHost {
                 return;
             }
 
-            const startTime = getTime();
-            const config = await this.queryBus.execute(
-                new GetPreparedConfigWithUsersQuery(
-                    node.activeConfigProfileUuid,
-                    node.activeInbounds,
-                ),
-            );
-
-            this.logger.log(`Generated config for node in ${formatExecutionTime(startTime)}`);
-
-            if (!config.isOk) {
-                throw new Error('Failed to get config for node');
-            }
-
             const integrationsResult = await this.queryBus.execute(
                 new GetResolvedIntegrationsQuery(node.integrationUuids),
             );
@@ -218,30 +228,83 @@ export class StartNodeProcessor extends WorkerHost {
                     .filter((integration) => integration !== undefined),
             );
 
-            const reqStartTime = getTime();
+            const connectionOpts = {
+                address: node.address,
+                port: node.port,
+                proxyUrl: node.proxyUrl,
+            };
 
-            const startNodeResult = await this.axios.startXray(
-                {
-                    xrayConfig: config.response.config as unknown as Record<string, unknown>,
-                    internals: {
-                        hashes: config.response.hashesPayload,
-                        forceRestart: force ?? false,
-                        metadata: {
-                            uuid: node.uuid,
-                            name: node.name,
-                            countryCode: node.countryCode,
-                            id: Number(node.id),
-                            tags: node.tags,
+            const internalsBase = {
+                forceRestart: force ?? false,
+                metadata: {
+                    uuid: node.uuid,
+                    name: node.name,
+                    countryCode: node.countryCode,
+                    id: Number(node.id),
+                    tags: node.tags,
+                },
+                integrations: nodeIntegrations,
+            };
+
+            const startTime = getTime();
+            let reqStartTime = startTime;
+            let startNodeResult: Awaited<ReturnType<AxiosService['startXray']>>;
+
+            if (isAwgProfile) {
+                const config = await this.queryBus.execute(
+                    new GetPreparedAwgConfigWithUsersQuery(
+                        node.activeConfigProfileUuid,
+                        node.activeInbounds,
+                    ),
+                );
+
+                this.logger.log(
+                    `Generated AmneziaWG config for node in ${formatExecutionTime(startTime)}`,
+                );
+
+                if (!config.isOk) {
+                    throw new Error('Failed to get AmneziaWG config for node');
+                }
+
+                reqStartTime = getTime();
+
+                startNodeResult = await this.axios.startAwg(
+                    {
+                        awgConfig: config.response.awgConfig,
+                        internals: {
+                            ...internalsBase,
+                            hashes: config.response.hashesPayload,
                         },
-                        integrations: nodeIntegrations,
                     },
-                },
-                {
-                    address: node.address,
-                    port: node.port,
-                    proxyUrl: node.proxyUrl,
-                },
-            );
+                    connectionOpts,
+                );
+            } else {
+                const config = await this.queryBus.execute(
+                    new GetPreparedConfigWithUsersQuery(
+                        node.activeConfigProfileUuid,
+                        node.activeInbounds,
+                    ),
+                );
+
+                this.logger.log(`Generated config for node in ${formatExecutionTime(startTime)}`);
+
+                if (!config.isOk) {
+                    throw new Error('Failed to get config for node');
+                }
+
+                reqStartTime = getTime();
+
+                startNodeResult = await this.axios.startXray(
+                    {
+                        xrayConfig: config.response.config as unknown as Record<string, unknown>,
+                        internals: {
+                            ...internalsBase,
+                            hashes: config.response.hashesPayload,
+                        },
+                    },
+                    connectionOpts,
+                );
+            }
 
             this.logger.log(`Started node in ${formatExecutionTime(reqStartTime)}`);
 

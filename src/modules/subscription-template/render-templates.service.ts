@@ -30,14 +30,22 @@ export class RenderTemplatesService {
     }> {
         const { srrContext, user, hosts, hostsOverrides, fallbackOptions } = params;
 
-        const formattedHosts = await this.resolveProxyConfigService.resolveProxyConfig({
-            subscriptionSettings: srrContext.subscriptionSettings,
-            hosts,
-            user,
-            hostsOverrides,
-            fallbackOptions,
-            excludeHostsByTags: srrContext.excludeHostsByTags,
-        });
+        const includeAwg =
+            srrContext.matchedResponseType === 'XRAY_BASE64' ||
+            srrContext.matchedResponseType === 'MIHOMO';
+
+        const { proxies: formattedHosts, awg: awgHosts } =
+            await this.resolveProxyConfigService.resolveSubscriptionConfigs(
+                {
+                    subscriptionSettings: srrContext.subscriptionSettings,
+                    hosts,
+                    user,
+                    hostsOverrides,
+                    fallbackOptions,
+                    excludeHostsByTags: srrContext.excludeHostsByTags,
+                },
+                includeAwg,
+            );
 
         switch (srrContext.matchedResponseType) {
             case 'XRAY_BASE64':
@@ -46,6 +54,7 @@ export class RenderTemplatesService {
                         formattedHosts,
                         SUBSCRIPTION_CONFIG_TYPES['XRAY_BASE64'].isBase64,
                         srrContext.isExtendedClient,
+                        awgHosts,
                     ),
                     contentType: SUBSCRIPTION_CONFIG_TYPES['XRAY_BASE64'].CONTENT_TYPE,
                 };
@@ -66,6 +75,7 @@ export class RenderTemplatesService {
                         false,
                         srrContext.isExtendedClient,
                         srrContext.overrideTemplateName,
+                        awgHosts,
                     ),
                     contentType: SUBSCRIPTION_CONFIG_TYPES['MIHOMO'].CONTENT_TYPE,
                 };

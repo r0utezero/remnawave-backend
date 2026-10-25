@@ -58,6 +58,9 @@ model Users {
   trojanPassword         String    @map("trojan_password")
   vlessUuid              String    @map("vless_uuid") @db.Uuid
   ssPassword             String    @map("ss_password")
+  awgPrivateKey          String?   @map("awg_private_key")
+  awgPublicKey           String?   @map("awg_public_key")
+  awgPresharedKey        String?   @map("awg_preshared_key")
   description            String?   @map("description")
   tag                    String?   @map("tag")
   telegramId             BigInt?   @map("telegram_id")
@@ -76,6 +79,7 @@ model Users {
   userMetas                      UserMeta[]
   torrentBlockerReports          TorrentBlockerReports[]
   traffic                        UserTraffic?
+  awgPeers                       UserAwgPeers[]
 
   externalSquad ExternalSquads? @relation(fields: [externalSquadUuid], references: [uuid], onDelete: SetNull)
 
@@ -424,6 +428,8 @@ model ConfigProfiles {
   name         String   @unique @map("name")
   tags         String[] @default([]) @map("tags")
   config       Json     @map("config")
+  /// @kyselyType('XRAY' | 'AMNEZIAWG')
+  coreType     String   @default("XRAY") @map("core_type")
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
@@ -452,6 +458,7 @@ model ConfigProfileInbounds {
   hosts                        Hosts[]
   configProfileInboundsToNodes ConfigProfileInboundsToNodes[]
   internalSquadInbounds        InternalSquadInbounds[]
+  userAwgPeers                 UserAwgPeers[]
 
   @@unique([tag])
   @@index([profileUuid, uuid])
@@ -663,4 +670,19 @@ model TorrentBlockerReports {
   node Nodes @relation(fields: [nodeId], references: [id], onDelete: Cascade)
 
   @@map("torrent_blocker_reports")
+}
+
+model UserAwgPeers {
+  userId      BigInt @map("user_id")
+  inboundUuid String @map("inbound_uuid") @db.Uuid
+  ip          String @map("ip") @db.Inet
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user    Users                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  inbound ConfigProfileInbounds @relation(fields: [inboundUuid], references: [uuid], onDelete: Cascade)
+
+  @@id([userId, inboundUuid])
+  @@unique([inboundUuid, ip])
+  @@map("user_awg_peers")
 }
